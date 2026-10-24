@@ -2,55 +2,77 @@
 import heapq
 
 
+def get_edge_cost(edge):
+    """
+    New edge format:
+    (neighbor, distance, travel_time, risk, cost)
+
+    Old edge format:
+    (neighbor, distance)
+    """
+    if len(edge) >= 5:
+        return float(edge[4])
+
+    # Compatibility with the original distance-only graph.
+    return float(edge[1])
+
+
 def dijkstra(graph, source, destination):
-    # Store the shortest distance found so far
-    distances = {}
+    """Find the minimum-cost route."""
 
-    # Store the previous node in the shortest path
-    parent = {}
+    distances = {
+        node: float("inf")
+        for node in graph
+    }
 
-    # Min-heap stores (distance, node)
+    parent = {
+        node: None
+        for node in graph
+    }
+
     priority_queue = []
-
-    for node in graph:
-        distances[node] = float("inf")
-        parent[node] = None
 
     if source not in graph or destination not in graph:
         return [], float("inf")
 
-    distances[source] = 0
-    heapq.heappush(priority_queue, (0, source))
+    distances[source] = 0.0
+
+    heapq.heappush(
+        priority_queue,
+        (0.0, source),
+    )
 
     while priority_queue:
-        current_distance, current_node = heapq.heappop(priority_queue)
+        current_cost, current_node = heapq.heappop(
+            priority_queue
+        )
 
-        # Ignore outdated heap entries
-        if current_distance > distances[current_node]:
+        # Ignore outdated queue entries.
+        if current_cost > distances[current_node]:
             continue
 
-        # Destination reached
         if current_node == destination:
             break
 
-        # Explore connected road nodes
-        for neighbor, road_distance in graph[current_node]:
-            new_distance = current_distance + road_distance
+        for edge in graph[current_node]:
+            neighbor = edge[0]
+            road_cost = get_edge_cost(edge)
 
-            if new_distance < distances[neighbor]:
-                distances[neighbor] = new_distance
+            new_cost = current_cost + road_cost
+
+            if new_cost < distances[neighbor]:
+                distances[neighbor] = new_cost
                 parent[neighbor] = current_node
 
                 heapq.heappush(
                     priority_queue,
-                    (new_distance, neighbor)
+                    (new_cost, neighbor),
                 )
 
-    # Destination is unreachable
     if distances[destination] == float("inf"):
         return [], float("inf")
 
-    # Reconstruct the path from destination to source
+    # Reconstruct the route.
     path = []
     current_node = destination
 

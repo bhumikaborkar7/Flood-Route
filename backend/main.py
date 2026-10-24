@@ -18,12 +18,15 @@ def home():
 
 @app.post("/route")
 def get_route(request: RouteRequest):
-    result = find_route(request.source, request.destination)
+    result = find_route(
+        request.source,
+        request.destination,
+    )
 
     if not result["path"]:
         raise HTTPException(
             status_code=404,
-            detail="No route found between these nodes"
+            detail="No route found between these nodes",
         )
 
     return result
