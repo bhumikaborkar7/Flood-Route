@@ -1,9 +1,14 @@
-
 from backend.graph_builder import build_graph
 from backend.dijkstra import dijkstra
 from backend.route_adapter import convert_graph
 from backend.alternative_routes import yen_k_shortest_paths
 from backend.sorting import merge_sort
+from backend.flood_scenarios import (
+    DEFAULT_SCENARIO,
+    SCENARIOS,
+    find_scenario_routes,
+    list_scenarios,
+)
 
 
 # Load the road network once.
@@ -128,3 +133,17 @@ def _shortest_path(current_graph, source, destination):
 
     path, _ = dijkstra(adjacency_list, source, destination)
     return path
+
+
+def find_scenario_alternatives(source, destination, k=3, scenario=DEFAULT_SCENARIO):
+    """Alternative routes for a flood scenario, plus the flood-unaware baseline."""
+
+    return find_scenario_routes(graph, coordinates, source, destination, k, scenario)
+
+
+def scenario_details():
+    return list_scenarios()
+
+
+def is_known_scenario(scenario):
+    return scenario in SCENARIOS
