@@ -1,3 +1,4 @@
+from backend.network_analysis import find_critical_roads
 from backend.graph_builder import build_graph
 from backend.dijkstra import dijkstra
 from backend.route_adapter import convert_graph
@@ -147,3 +148,9 @@ def scenario_details():
 
 def is_known_scenario(scenario):
     return scenario in SCENARIOS
+
+
+def get_network_analysis():
+    """Return critical road connections identified by Tarjan's algorithm."""
+
+    return find_critical_roads(graph, coordinates)

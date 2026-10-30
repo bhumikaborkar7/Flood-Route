@@ -9,6 +9,7 @@ from backend.route_service import (
     is_known_scenario,
     scenario_details,
     coordinates,
+    get_network_analysis,
 )
 
 
@@ -85,6 +86,11 @@ def get_route(request: RouteRequest):
         )
 
     return result
+
+
+@app.get("/network-analysis")
+def network_analysis():
+    return get_network_analysis()
 
 
 @app.get("/scenarios")

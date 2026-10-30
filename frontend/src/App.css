@@ -712,3 +712,78 @@ ol {
     transition: none !important;
   }
 }
+
+.network-analysis {
+  margin-top: 22px;
+  padding: 16px;
+  background: #f1f7f9;
+  border: 1px solid #d8e7eb;
+  border-radius: 12px;
+}
+
+.network-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.network-head h2 {
+  margin: 0;
+  font-size: 17px;
+}
+
+.algorithm-tag {
+  padding: 5px 9px;
+  border-radius: 20px;
+  background: #d9eef2;
+  color: #08788b;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.network-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+
+.network-stat {
+  padding: 11px 8px;
+  background: white;
+  border-radius: 9px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.network-stat span {
+  color: #647987;
+  font-size: 11px;
+}
+
+.network-stat strong {
+  font-size: 17px;
+  color: #123747;
+}
+
+.network-stat.critical strong {
+  color: #d97735;
+}
+
+.network-note {
+  margin: 12px 0 0;
+  color: #647987;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.critical-road-swatch {
+  display: inline-block;
+  width: 24px;
+  height: 4px;
+  background-color: #ff00ff;
+  border-radius: 4px;
+  margin-right: 8px;
+  vertical-align: middle;
+}

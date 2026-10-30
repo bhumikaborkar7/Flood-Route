@@ -255,6 +255,10 @@ function App() {
   const [booting, setBooting] = useState(true);
   const [error, setError] = useState("");
   const latestRequest = useRef(0);
+  const [networkAnalysis, setNetworkAnalysis] = useState(null);
+  const [showCriticalRoads, setShowCriticalRoads] = useState(true);
+  const [networkLoading, setNetworkLoading] = useState(true);
+  const [networkError, setNetworkError] = useState("");
 
   useEffect(() => {
     async function boot() {
@@ -282,6 +286,21 @@ function App() {
     }
 
     boot();
+  }, []);
+
+  useEffect(() => {
+    async function fetchNetworkAnalysis() {
+      try {
+        const data = await request("/network-analysis");
+        setNetworkAnalysis(data);
+      } catch (err) {
+        setNetworkError(err.message);
+      } finally {
+        setNetworkLoading(false);
+      }
+    }
+
+    fetchNetworkAnalysis();
   }, []);
 
   async function findRoutes(scenarioId = scenario) {
@@ -504,6 +523,14 @@ function App() {
           >
             {loading ? "Finding routes…" : "Find routes"}
           </button>
+          <label className="critical-toggle">
+            <input
+              type="checkbox"
+              checked={showCriticalRoads}
+              onChange={(e) => setShowCriticalRoads(e.target.checked)}
+            />
+            Show critical roads (Tarjan)
+          </label>
 
           {error && (
             <p className="error" role="alert">
@@ -554,6 +581,49 @@ function App() {
               </div>
             </section>
           )}
+          
+          <section className="network-analysis">
+            <div className="network-head">
+              <h2>Network Analysis</h2>
+              <span className="algorithm-tag">Tarjan's Algorithm</span>
+            </div>
+
+            {networkLoading ? (
+              <p className="hint">Loading network analysis...</p>
+            ) : networkError ? (
+              <p className="error">{networkError}</p>
+            ) : networkAnalysis ? (
+              <>
+                <div className="network-stats">
+                  <div className="network-stat">
+                    <span>Total Nodes</span>
+                    <strong>
+                      {networkAnalysis.total_nodes.toLocaleString()}
+                    </strong>
+                  </div>
+
+                  <div className="network-stat">
+                    <span>Connections</span>
+                    <strong>
+                      {networkAnalysis.total_connections.toLocaleString()}
+                    </strong>
+                  </div>
+
+                  <div className="network-stat critical">
+                    <span>Critical Roads</span>
+                    <strong>
+                      {networkAnalysis.total_bridges.toLocaleString()}
+                    </strong>
+                  </div>
+                </div>
+
+                <p className="network-note">
+                  Critical roads are bridge connections whose removal
+                  would disconnect part of the undirected road network.
+                </p>
+              </>
+            ) : null}
+          </section>
 
           <details className="how">
             <summary>How routes are chosen</summary>
@@ -613,19 +683,26 @@ function App() {
               );
             })}
 
-            {showBaseline && baselineDiffers && !loading && (
-              <Polyline
-                positions={baseline.coordinates}
-                pathOptions={{
-                  color: "#51606b",
-                  weight: 3,
-                  opacity: 0.85,
-                  dashArray: "2 8",
-                  lineCap: "round",
-                }}
-                interactive={false}
-              />
-            )}
+            {showCriticalRoads &&
+  networkAnalysis?.critical_roads?.map((road) => {
+    if (!road.coordinates || road.coordinates.length !== 2) {
+      return null;
+    }
+
+    return (
+      <Polyline
+        key={`critical-${road.source}-${road.target}`}
+        positions={road.coordinates}
+        pathOptions={{
+          color: "#ff00ff",
+          weight: 2,
+          opacity: 0.65,
+          lineCap: "round",
+        }}
+        interactive={false}
+      />
+    );
+  })}
 
             {routes.map((route, index) => (
               <Polyline
@@ -693,6 +770,10 @@ function App() {
                       {level === 3 && " (no traffic)"}
                     </li>
                   ))}
+                  <li>
+                  <span className="critical-road-swatch" />
+                  Critical roads (Tarjan)
+                </li>
               </ul>
 
               {baselineDiffers && (
