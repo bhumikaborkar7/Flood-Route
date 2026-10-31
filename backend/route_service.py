@@ -4,7 +4,7 @@ from backend.network_analysis import find_critical_roads
 from backend.graph_builder import build_graph
 from backend.dijkstra import dijkstra
 from backend.astar import astar, min_minutes_per_meter
-from backend.route_adapter import convert_graph
+from backend.route_adapter import convert_graph, shortest_path
 from backend.alternative_routes import yen_k_shortest_paths
 from backend.sorting import merge_sort
 from backend.flood_scenarios import (
@@ -146,10 +146,31 @@ def _shortest_path(current_graph, source, destination):
     return path
 
 
-def find_scenario_alternatives(source, destination, k=3, scenario=DEFAULT_SCENARIO):
-    """Alternative routes for a flood scenario, plus the flood-unaware baseline."""
+def _astar_path(current_graph, source, destination):
+    """A* shortest path on a weighted dict graph, for Yen's algorithm."""
 
-    return find_scenario_routes(graph, coordinates, source, destination, k, scenario)
+    path, _ = astar(
+        current_graph, source, destination, coordinates, MIN_MIN_PER_M
+    )
+    return path
+
+
+def find_scenario_alternatives(source, destination, k=3,
+                               scenario=DEFAULT_SCENARIO, algorithm="dijkstra"):
+    """Alternative routes for a flood scenario, plus the flood-unaware baseline.
+
+    `algorithm` picks the shortest-path search used inside Yen's method:
+    "dijkstra" or "astar". Both return the same optimal costs.
+    """
+
+    path_fn = _astar_path if algorithm == "astar" else shortest_path
+
+    result = find_scenario_routes(
+        graph, coordinates, source, destination, k, scenario, path_fn
+    )
+    result["algorithm"] = algorithm
+
+    return result
 
 
 def scenario_details():

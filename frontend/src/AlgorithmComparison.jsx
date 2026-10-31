@@ -1,16 +1,25 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
-const API_URL = 'http://127.0.0.1:8000'
+const API_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000'
 
-export default function AlgorithmComparison({ source, destination, scenario }) {
+export default function AlgorithmComparison({
+  source,
+  destination,
+  scenario,
+  auto = false,
+  trigger = null,
+}) {
   const [result, setResult] = useState(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const latest = useRef(0)
 
   async function runComparison() {
+    if (!source || !destination) return
+
+    const id = ++latest.current
     setLoading(true)
     setError('')
-    setResult(null)
 
     try {
       const response = await fetch(`${API_URL}/compare-algorithms`, {
@@ -24,90 +33,112 @@ export default function AlgorithmComparison({ source, destination, scenario }) {
         throw new Error(body.detail || 'Comparison failed')
       }
 
-      setResult(await response.json())
+      const data = await response.json()
+      if (id === latest.current) setResult(data)
     } catch (err) {
-      setError(err.message)
+      if (id === latest.current) {
+        setResult(null)
+        setError(err.message)
+      }
     } finally {
-      setLoading(false)
+      if (id === latest.current) setLoading(false)
     }
   }
 
-  const d = result?.dijkstra
-  const a = result?.astar
+  // Re-run whenever new routes arrive, if auto-compare is on.
+  useEffect(() => {
+    if (auto && trigger) runComparison()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [auto, trigger])
+
+  // Only show a result that matches what is currently selected.
+  const fresh =
+    result &&
+    result.source === source &&
+    result.destination === destination &&
+    result.scenario === scenario
+
+  const d = fresh ? result.dijkstra : null
+  const a = fresh ? result.astar : null
   const win = (mine, other) => (mine < other ? 'win' : '')
 
   return (
-    <section className="algo-compare">
-      <div className="network-head">
-        <h2>Algorithm comparison</h2>
-        <span className="algorithm-tag">Dijkstra vs A*</span>
+    <section className="card">
+      <div className="card-head">
+        <svg className="icon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+          <path
+            d="M4 17a8 8 0 1 1 16 0M12 17l4-5"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.7"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
+        <h2>Algorithm performance</h2>
+        <span className="tag">Dijkstra vs A*</span>
       </div>
 
-      <button
-        className="primary"
-        onClick={runComparison}
-        disabled={loading || !source || !destination}
-      >
-        {loading ? 'Comparing…' : 'Compare Dijkstra vs A*'}
-      </button>
-
-      {error && <p className="error">{error}</p>}
-
-      {result && (
+      {fresh ? (
         <>
-          <table className="algo-table">
+          <table className="table algo">
             <thead>
               <tr>
-                <th>Metric</th>
+                <th />
                 <th>Dijkstra</th>
                 <th>A*</th>
               </tr>
             </thead>
             <tbody>
               <tr>
-                <td>Total cost (min)</td>
+                <td>Route cost (min)</td>
                 <td>{d.total_cost}</td>
                 <td>{a.total_cost}</td>
               </tr>
               <tr>
-                <td>Nodes expanded</td>
-                <td className={win(d.nodes_expanded, a.nodes_expanded)}>
-                  {d.nodes_expanded}
-                </td>
-                <td className={win(a.nodes_expanded, d.nodes_expanded)}>
-                  {a.nodes_expanded}
-                </td>
+                <td>Execution time</td>
+                <td className={win(d.time_ms, a.time_ms)}>{d.time_ms} ms</td>
+                <td className={win(a.time_ms, d.time_ms)}>{a.time_ms} ms</td>
               </tr>
               <tr>
-                <td>Time (ms)</td>
-                <td className={win(d.time_ms, a.time_ms)}>{d.time_ms}</td>
-                <td className={win(a.time_ms, d.time_ms)}>{a.time_ms}</td>
+                <td>Nodes explored</td>
+                <td className={win(d.nodes_expanded, a.nodes_expanded)}>
+                  {d.nodes_expanded.toLocaleString()}
+                </td>
+                <td className={win(a.nodes_expanded, d.nodes_expanded)}>
+                  {a.nodes_expanded.toLocaleString()}
+                </td>
               </tr>
             </tbody>
           </table>
 
-          <div className="algo-stats">
-            <div className={`algo-stat ${result.same_cost ? 'ok' : 'bad'}`}>
-              <span>Same cost</span>
-              <strong>{result.same_cost ? 'Yes' : 'No'}</strong>
-            </div>
-            <div className="algo-stat">
-              <span>Nodes saved</span>
-              <strong>{result.nodes_saved_percent}%</strong>
-            </div>
-            <div className="algo-stat">
-              <span>Speedup</span>
-              <strong>{result.speedup}×</strong>
-            </div>
-          </div>
-
-          <p className="network-note">
-            A* uses a straight-line distance estimate to skip nodes that are
-            moving away from the destination. Both algorithms return the same
-            optimal cost.
+          <p className="note">
+            {result.same_cost ? 'Both find the same optimal cost.' : 'The costs differ.'}{' '}
+            A* explored {result.nodes_saved_percent}% fewer nodes
+            {result.speedup ? ` and ran ${result.speedup}× faster.` : '.'}
           </p>
         </>
+      ) : (
+        !loading &&
+        !error && (
+          <p className="hint">
+            Run a comparison to see how many junctions each algorithm
+            examines on this trip.
+          </p>
+        )
       )}
+
+      {loading && <p className="hint">Comparing…</p>}
+      {error && <p className="error">{error}</p>}
+
+      <button
+        type="button"
+        className="outline"
+        onClick={runComparison}
+        disabled={loading || !source || !destination}
+      >
+        {fresh ? 'Run again' : 'Run comparison'}
+      </button>
     </section>
   )
 }

@@ -8,6 +8,7 @@ import {
   Popup,
   TileLayer,
   Tooltip,
+  ZoomControl,
   useMap,
 } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
@@ -17,19 +18,39 @@ import { playSearch } from "./searchReplay";
 
 const API = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
 
-const ROUTE_COLORS = ["#0b7285", "#5b5bd6", "#b83280"];
+// Recommended route is solid teal; alternatives are dashed.
+const ROUTE_COLORS = ["#1fd1b5", "#3b9cff", "#9b6bff"];
+const CRITICAL_COLOR = "#ffd43b";
 
 const IDLE_REPLAY = { status: "idle", algorithm: null, label: "", done: 0, total: 0 };
 
 const LEVEL_STYLE = {
-  1: { color: "#d9a42b", fill: "#f2c94c", label: "Low" },
-  2: { color: "#d9822b", fill: "#f2994a", label: "Medium" },
-  3: { color: "#b8321f", fill: "#d9503b", label: "Closed" },
+  1: { color: "#f2c94c", label: "Low" },
+  2: { color: "#f2994a", label: "Medium" },
+  3: { color: "#ef4444", label: "Closed" },
 };
 
-// Used only if the backend has no /scenarios endpoint yet.
 const FALLBACK_SCENARIOS = [
   { id: "normal", label: "Normal day", description: "", zones: [] },
+];
+
+const ALGORITHMS = [
+  { id: "astar", label: "A* (heuristic search)" },
+  { id: "dijkstra", label: "Dijkstra" },
+];
+
+const SORTS = [
+  { key: "total_cost", label: "Total cost" },
+  { key: "distance", label: "Distance" },
+  { key: "estimated_travel_time_minutes", label: "Time" },
+  { key: "flood_exposure_m", label: "Flood exposure" },
+];
+
+const NAV = [
+  { id: "planner", label: "Route planner", icon: "route" },
+  { id: "network", label: "Network analysis", icon: "network" },
+  { id: "scenario-field", label: "Flood scenarios", icon: "drop" },
+  { id: "about", label: "About", icon: "info" },
 ];
 
 const startIcon = L.divIcon({
@@ -46,6 +67,8 @@ const endIcon = L.divIcon({
   iconAnchor: [13, 13],
 });
 
+/* ---------- helpers ---------- */
+
 function formatMinutes(minutes) {
   const value = Number(minutes);
   if (!Number.isFinite(value)) return "–";
@@ -61,6 +84,18 @@ function formatKm(metres) {
 function formatMetres(metres) {
   const value = Number(metres);
   return value >= 1000 ? formatKm(value) : `${Math.round(value)} m`;
+}
+
+// Share of the route that runs through flooded roads -> a label for the UI.
+function exposureOf(route) {
+  const distance = Number(route.distance) || 0;
+  const exposure = Number(route.flood_exposure_m) || 0;
+  const share = distance > 0 ? exposure / distance : 0;
+
+  if (exposure <= 0) return { text: "None", tone: "good" };
+  if (share < 0.1) return { text: "Low", tone: "good" };
+  if (share < 0.3) return { text: "Medium", tone: "warn" };
+  return { text: "High", tone: "bad" };
 }
 
 async function request(path, options) {
@@ -84,6 +119,88 @@ async function request(path, options) {
   }
 
   return data;
+}
+
+/* ---------- small UI pieces ---------- */
+
+const ICONS = {
+  pin: "M12 21s-7-6.2-7-11a7 7 0 0 1 14 0c0 4.8-7 11-7 11zM12 12.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5z",
+  drop: "M12 3C9 7 7 9.4 7 12a5 5 0 0 0 10 0c0-2.6-2-5-5-9z",
+  search: "M11 18a7 7 0 1 1 0-14 7 7 0 0 1 0 14zm5-2 5 5",
+  clock: "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 7v5l3 2",
+  shield: "M12 3l8 3v5c0 5-3.5 8.5-8 10-4.5-1.5-8-5-8-10V6z",
+  gauge: "M4 17a8 8 0 1 1 16 0M12 17l4-5",
+  route:
+    "M6 20a2 2 0 1 0 0-4 2 2 0 0 0 0 4zM18 8a2 2 0 1 0 0-4 2 2 0 0 0 0 4zM8 18h6a3.5 3.5 0 0 0 0-7h-4a3.5 3.5 0 0 1 0-7h6",
+  chevron: "m6 9 6 6 6-6",
+  swap: "M8 4v14m0 0-3-3m3 3 3-3M16 20V6m0 0-3 3m3-3 3 3",
+  network:
+    "M6 8a2 2 0 1 0 0-4 2 2 0 0 0 0 4zM18 8a2 2 0 1 0 0-4 2 2 0 0 0 0 4zM12 20a2 2 0 1 0 0-4 2 2 0 0 0 0 4zM7.5 7.5l3.5 9M16.5 7.5 13 16.5M8 6h8",
+  info: "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 11v5M12 8v.01",
+  ruler: "M3 16 16 3l5 5L8 21zM7 12l2 2M10 9l2 2M13 6l2 2",
+  play: "M8 5v14l11-7z",
+  settings:
+    "M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19 12a7 7 0 0 0-.1-1.2l2-1.5-2-3.4-2.3.9a7 7 0 0 0-2-1.2L14.2 3h-4l-.4 2.6a7 7 0 0 0-2 1.2l-2.3-.9-2 3.4 2 1.5A7 7 0 0 0 5 12c0 .4 0 .8.1 1.2l-2 1.5 2 3.4 2.3-.9c.6.5 1.3.9 2 1.2l.4 2.6h4l.4-2.6c.7-.3 1.4-.7 2-1.2l2.3.9 2-3.4-2-1.5c.1-.4.1-.8.1-1.2z",
+};
+
+function Icon({ name, size = 18, className = "" }) {
+  return (
+    <svg
+      className={`icon ${className}`}
+      viewBox="0 0 24 24"
+      width={size}
+      height={size}
+      aria-hidden="true"
+    >
+      <path
+        d={ICONS[name]}
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.7"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function CardHead({ icon, title, aside }) {
+  return (
+    <div className="card-head">
+      <Icon name={icon} />
+      <h2>{title}</h2>
+      {aside}
+    </div>
+  );
+}
+
+function Field({ id, label, icon, children }) {
+  return (
+    <label className="fld" id={id}>
+      <span className="fld-label">{label}</span>
+      <span className="fld-box">
+        <Icon name={icon} />
+        {children}
+        <Icon name="chevron" size={16} className="fld-chev" />
+      </span>
+    </label>
+  );
+}
+
+function Switch({ label, checked, onChange, disabled }) {
+  return (
+    <label className={disabled ? "switch-row disabled" : "switch-row"}>
+      <span>{label}</span>
+      <input
+        type="checkbox"
+        role="switch"
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+        disabled={disabled}
+      />
+      <span className="switch" aria-hidden="true" />
+    </label>
+  );
 }
 
 function FitBounds({ routes }) {
@@ -110,104 +227,16 @@ function MapBridge({ onMap }) {
   return null;
 }
 
-function ScenarioControl({ scenarios, value, onChange, disabled }) {
-  const active = scenarios.find((scenario) => scenario.id === value);
-
-  return (
-    <fieldset className="conditions" disabled={disabled}>
-      <legend>Road conditions</legend>
-
-      <div className="segmented" role="radiogroup">
-        {scenarios.map((scenario) => (
-          <label
-            key={scenario.id}
-            className={value === scenario.id ? "segment on" : "segment"}
-          >
-            <input
-              type="radio"
-              name="scenario"
-              value={scenario.id}
-              checked={value === scenario.id}
-              onChange={() => onChange(scenario.id)}
-            />
-            <span className="segment-name">{scenario.label}</span>
-            <span className="segment-count">
-              {scenario.zones.length === 0
-                ? "No flooding"
-                : `${scenario.zones.length} flooded`}
-            </span>
-          </label>
-        ))}
-      </div>
-
-      {active?.description && (
-        <p className="conditions-note">{active.description}</p>
-      )}
-    </fieldset>
-  );
-}
-
-function ExposureBar({ exposure, distance }) {
-  const share = distance > 0 ? exposure / distance : 0;
-  const width = exposure > 0 ? Math.max(share * 100, 4) : 0;
-
-  return (
-    <div className="exposure" aria-hidden="true">
-      <div className="exposure-fill" style={{ width: `${width}%` }} />
-    </div>
-  );
-}
-
-function RouteCard({ route, index, badges, selected, dry, onSelect }) {
-  const delay = Number(route.flood_delay_minutes) || 0;
-  const exposure = Number(route.flood_exposure_m) || 0;
-
-  return (
-    <button
-      type="button"
-      className={selected ? "route-card selected" : "route-card"}
-      onClick={onSelect}
-      aria-pressed={selected}
-    >
-      <span
-        className="route-swatch"
-        style={{ backgroundColor: ROUTE_COLORS[index % ROUTE_COLORS.length] }}
-      />
-
-      <div className="route-main">
-        <div className="route-title">
-          <strong>Route {index + 1}</strong>
-          {badges.map((badge) => (
-            <span key={badge} className="badge">
-              {badge}
-            </span>
-          ))}
-        </div>
-
-        <div className="route-figures">
-          <span className="route-time">
-            {formatMinutes(route.estimated_travel_time_minutes)}
-          </span>
-          <span className="route-distance">{formatKm(route.distance)}</span>
-        </div>
-
-        <ExposureBar exposure={exposure} distance={route.distance} />
-
-        <p className="route-flood">
-          {exposure > 0
-            ? `${formatMetres(exposure)} through flooded roads`
-            : dry
-              ? "No flooding in this scenario"
-              : "Avoids flooded roads"}
-          {delay > 0.05 && ` · adds ${formatMinutes(delay)}`}
-        </p>
-      </div>
-    </button>
-  );
-}
-
 function Comparison({ best, baseline, scenario }) {
-  if (!best || !baseline || scenario === "normal") return null;
+  if (!best || !baseline || scenario === "normal") {
+    return (
+      <p className="hint">
+        {scenario === "normal"
+          ? "Roads are dry in this scenario, so there is no flood impact to compare."
+          : "Find routes to see how flooding changes the best choice."}
+      </p>
+    );
+  }
 
   if (baseline.same_as_best) {
     const exposure = Number(baseline.flood_exposure_m) || 0;
@@ -249,12 +278,14 @@ function Comparison({ best, baseline, scenario }) {
         {blocked > 0
           ? ` and ${blocked} closed ${blocked === 1 ? "road" : "roads"}, so it can't be driven.`
           : saved > 0.1
-            ? `, which makes it ${formatMinutes(saved)} slower than Route 1.`
+            ? `, which makes it ${formatMinutes(saved)} slower than the recommended route.`
             : "."}
       </p>
     </div>
   );
 }
+
+/* ---------- app ---------- */
 
 function App() {
   const [locations, setLocations] = useState([]);
@@ -262,23 +293,34 @@ function App() {
   const [source, setSource] = useState("");
   const [destination, setDestination] = useState("");
   const [scenario, setScenario] = useState("normal");
+  const [k, setK] = useState(3);
+  const [algorithm, setAlgorithm] = useState("astar");
   const [result, setResult] = useState(null);
   const [selected, setSelected] = useState(0);
-  const [showBaseline, setShowBaseline] = useState(true);
   const [loading, setLoading] = useState(false);
   const [booting, setBooting] = useState(true);
   const [error, setError] = useState("");
   const latestRequest = useRef(0);
+
   const [networkAnalysis, setNetworkAnalysis] = useState(null);
-  const [showCriticalRoads, setShowCriticalRoads] = useState(true);
   const [networkLoading, setNetworkLoading] = useState(true);
   const [networkError, setNetworkError] = useState("");
+
   const [mapInstance, setMapInstance] = useState(null);
   const [replay, setReplay] = useState(IDLE_REPLAY);
   const [replayError, setReplayError] = useState("");
-  const [backendOnline, setBackendOnline] = useState(null);
   const cancelReplay = useRef(null);
   const latestReplay = useRef(0);
+  const [backendOnline, setBackendOnline] = useState(null);
+
+  // Layers and options
+  const [showCriticalRoads, setShowCriticalRoads] = useState(false);
+  const [showFloodZones, setShowFloodZones] = useState(true);
+  const [showBaseline, setShowBaseline] = useState(true);
+  const [autoCompare, setAutoCompare] = useState(true);
+  const [advancedOpen, setAdvancedOpen] = useState(true);
+  const [tab, setTab] = useState("details");
+  const [sortBy, setSortBy] = useState("total_cost");
 
   useEffect(() => {
     async function boot() {
@@ -311,8 +353,7 @@ function App() {
   useEffect(() => {
     async function fetchNetworkAnalysis() {
       try {
-        const data = await request("/network-analysis");
-        setNetworkAnalysis(data);
+        setNetworkAnalysis(await request("/network-analysis"));
       } catch (err) {
         setNetworkError(err.message);
       } finally {
@@ -344,7 +385,7 @@ function App() {
     };
   }, []);
 
-  async function findRoutes(scenarioId = scenario) {
+  async function findRoutes(scenarioId = scenario, kValue = k, algo = algorithm) {
     if (!source || !destination) {
       setError("Choose a start and a destination.");
       return;
@@ -366,8 +407,9 @@ function App() {
         body: JSON.stringify({
           source: Number(source),
           destination: Number(destination),
-          k: 3,
+          k: kValue,
           scenario: scenarioId,
+          algorithm: algo,
         }),
       });
 
@@ -387,9 +429,17 @@ function App() {
   function changeScenario(id) {
     setScenario(id);
     stopReplay();
-
-    // Re-plan straight away so the route visibly reacts to the flooding.
     if (result) findRoutes(id);
+  }
+
+  function changeK(value) {
+    setK(value);
+    if (result) findRoutes(scenario, value);
+  }
+
+  function changeAlgorithm(value) {
+    setAlgorithm(value);
+    if (result) findRoutes(scenario, k, value);
   }
 
   function changePlace(setter) {
@@ -474,12 +524,18 @@ function App() {
     }
   }
 
+  function jumpTo(id) {
+    if (id === "network") setShowCriticalRoads(true);
+    document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }
+
   const routes = useMemo(
     () => (result?.routes || []).filter((r) => r.coordinates?.length > 0),
     [result]
   );
 
   const baseline = result?.baseline;
+  const baselineDiffers = baseline && !baseline.same_as_best;
   const activeScenario = scenarios.find((s) => s.id === scenario);
   const zones = activeScenario?.zones || [];
 
@@ -493,7 +549,6 @@ function App() {
 
     return routes.map((route, index) => {
       const badges = [];
-      if (index === 0) badges.push("Recommended");
       if (
         routes.length > 1 &&
         Number(route.estimated_travel_time_minutes) === fastest &&
@@ -508,20 +563,34 @@ function App() {
     });
   }, [routes]);
 
+  const sortedRows = useMemo(
+    () =>
+      routes
+        .map((route, index) => ({ route, index }))
+        .sort(
+          (a, b) =>
+            (Number(a.route[sortBy]) || 0) - (Number(b.route[sortBy]) || 0)
+        ),
+    [routes, sortBy]
+  );
+
   const sourceName = locations.find((l) => String(l.node_id) === source)?.name;
   const destinationName = locations.find(
     (l) => String(l.node_id) === destination
   )?.name;
 
   const current = routes[selected];
-  const baselineDiffers = baseline && !baseline.same_as_best;
+  const currentExposure = current ? exposureOf(current) : null;
+
+  const statusClass =
+    backendOnline === null ? "checking" : backendOnline ? "online" : "offline";
 
   return (
     <div className="app">
       <header className="topbar">
         <div className="brand">
           <span className="brand-mark" aria-hidden="true">
-            <svg viewBox="0 0 24 24" width="22" height="22">
+            <svg viewBox="0 0 24 24" width="24" height="24">
               <path
                 d="M3 15c2.2 0 2.2-2 4.5-2s2.2 2 4.5 2 2.2-2 4.5-2 2.2 2 4.5 2M3 19.5c2.2 0 2.2-2 4.5-2s2.2 2 4.5 2 2.2-2 4.5-2 2.2 2 4.5 2M12 3C9 7 7 9.4 7 12a5 5 0 0 0 10 0c0-2.6-2-5-5-9z"
                 fill="none"
@@ -534,20 +603,25 @@ function App() {
           </span>
           <div>
             <h1>FloodRoute</h1>
-            <p>Flood-aware routes for Mumbai</p>
+            <p>Safer routes. Stronger cities.</p>
           </div>
         </div>
 
-        <span
-          className={`status-badge ${
-            backendOnline === null
-              ? "checking"
-              : backendOnline
-                ? "online"
-                : "offline"
-          }`}
-          role="status"
-        >
+        <nav className="nav" aria-label="Sections">
+          {NAV.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              className={item.id === "planner" ? "nav-item active" : "nav-item"}
+              onClick={() => jumpTo(item.id)}
+            >
+              <Icon name={item.icon} size={17} />
+              {item.label}
+            </button>
+          ))}
+        </nav>
+
+        <span className={`status-badge ${statusClass}`} role="status">
           <span className="status-dot" aria-hidden="true" />
           {backendOnline === null
             ? "Checking backend…"
@@ -557,55 +631,33 @@ function App() {
         </span>
       </header>
 
-      <main className="layout">
-        <aside className="panel">
-          <section className="trip">
-            <h2>Plan a trip</h2>
+      <main className="dash">
+        {/* ---------------- left column ---------------- */}
+        <aside className="col col-left">
+          <section className="card" id="planner">
+            <CardHead icon="pin" title="Plan your route" />
+            <p className="sub">
+              Find the safest and most efficient route in Mumbai with flood
+              awareness.
+            </p>
 
-            <div className="places">
-              <div className="places-rail" aria-hidden="true">
-                <span className="dot dot-start" />
-                <span className="line" />
-                <span className="dot dot-end" />
-              </div>
-
-              <div className="places-fields">
-                <label className="field">
-                  <span>From</span>
-                  <select
-                    value={source}
-                    onChange={changePlace(setSource)}
-                    disabled={booting}
-                  >
-                    <option value="">
-                      {booting ? "Loading places…" : "Choose a start"}
+            <div className="swap-wrap">
+              <Field label="From" icon="pin">
+                <select
+                  value={source}
+                  onChange={changePlace(setSource)}
+                  disabled={booting}
+                >
+                  <option value="">
+                    {booting ? "Loading places…" : "Choose a start"}
+                  </option>
+                  {locations.map((l) => (
+                    <option key={l.node_id} value={String(l.node_id)}>
+                      {l.name}
                     </option>
-                    {locations.map((l) => (
-                      <option key={l.node_id} value={String(l.node_id)}>
-                        {l.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-
-                <label className="field">
-                  <span>To</span>
-                  <select
-                    value={destination}
-                    onChange={changePlace(setDestination)}
-                    disabled={booting}
-                  >
-                    <option value="">
-                      {booting ? "Loading places…" : "Choose a destination"}
-                    </option>
-                    {locations.map((l) => (
-                      <option key={l.node_id} value={String(l.node_id)}>
-                        {l.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              </div>
+                  ))}
+                </select>
+              </Field>
 
               <button
                 type="button"
@@ -615,398 +667,675 @@ function App() {
                 aria-label="Swap start and destination"
                 title="Swap start and destination"
               >
-                <svg viewBox="0 0 24 24" width="18" height="18">
-                  <path
-                    d="M8 4v14m0 0-3-3m3 3 3-3M16 20V6m0 0-3 3m3-3 3 3"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.7"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                </svg>
+                <Icon name="swap" size={16} />
               </button>
+
+              <Field label="To" icon="pin">
+                <select
+                  value={destination}
+                  onChange={changePlace(setDestination)}
+                  disabled={booting}
+                >
+                  <option value="">
+                    {booting ? "Loading places…" : "Choose a destination"}
+                  </option>
+                  {locations.map((l) => (
+                    <option key={l.node_id} value={String(l.node_id)}>
+                      {l.name}
+                    </option>
+                  ))}
+                </select>
+              </Field>
             </div>
+
+            <Field id="scenario-field" label="Flood scenario" icon="drop">
+              <select
+                value={scenario}
+                onChange={(e) => changeScenario(e.target.value)}
+                disabled={booting}
+              >
+                {scenarios.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.label}
+                    {s.zones.length ? ` (${s.zones.length} flooded)` : ""}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            {activeScenario?.description && (
+              <p className="note">{activeScenario.description}</p>
+            )}
+
+            <Field label="Algorithm" icon="settings">
+              <select
+                value={algorithm}
+                onChange={(e) => changeAlgorithm(e.target.value)}
+                disabled={booting}
+              >
+                {ALGORITHMS.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.label}
+                  </option>
+                ))}
+              </select>
+            </Field>
+
+            <Field label="Number of alternative routes (K)" icon="route">
+              <select
+                value={k}
+                onChange={(e) => changeK(Number(e.target.value))}
+                disabled={booting}
+              >
+                {[1, 2, 3, 4, 5].map((n) => (
+                  <option key={n} value={n}>
+                    {n}
+                  </option>
+                ))}
+              </select>
+            </Field>
+
+            <button
+              type="button"
+              className="primary"
+              onClick={() => findRoutes()}
+              disabled={booting || loading}
+            >
+              <Icon name="search" size={18} />
+              {loading ? "Finding routes…" : "Find routes"}
+            </button>
+
+            {error && (
+              <p className="error" role="alert">
+                {error}
+              </p>
+            )}
+            {loading && !result && (
+              <p className="hint">
+                Searching for alternatives. Longer trips can take several
+                seconds.
+              </p>
+            )}
           </section>
 
-          <ScenarioControl
-            scenarios={scenarios}
-            value={scenario}
-            onChange={changeScenario}
-            disabled={booting}
-          />
-
-          <button
-            type="button"
-            className="primary"
-            onClick={() => findRoutes()}
-            disabled={booting || loading}
-          >
-            {loading ? "Finding routes…" : "Find routes"}
-          </button>
-          <label className="critical-toggle">
-            <input
-              type="checkbox"
-              checked={showCriticalRoads}
-              onChange={(e) => setShowCriticalRoads(e.target.checked)}
-            />
-            Show critical roads (Tarjan)
-          </label>
-
-          {error && (
-            <p className="error" role="alert">
-              {error}
-            </p>
-          )}
-
-          {loading && !result && (
-            <p className="hint">
-              Searching for alternatives. Longer trips can take several seconds.
-            </p>
-          )}
-
-          {routes.length > 0 && (
-            <section
-              className={loading ? "results updating" : "results"}
-              aria-live="polite"
+          <section className="card">
+            <button
+              type="button"
+              className="card-head toggle-head"
+              onClick={() => setAdvancedOpen((open) => !open)}
+              aria-expanded={advancedOpen}
             >
-              <div className="results-head">
-                <h2>
-                  {routes.length} {routes.length === 1 ? "route" : "routes"}
-                </h2>
-                <span className="timing">
-                  {loading
-                    ? "Updating…"
-                    : `Found in ${(result.computation_ms / 1000).toFixed(1)} s`}
-                </span>
-              </div>
+              <Icon name="settings" />
+              <h2>Advanced options</h2>
+              <Icon
+                name="chevron"
+                size={16}
+                className={advancedOpen ? "chev open" : "chev"}
+              />
+            </button>
 
+            {advancedOpen && (
+              <div className="switches">
+                <Switch
+                  label="Show critical roads (Tarjan's algorithm)"
+                  checked={showCriticalRoads}
+                  onChange={setShowCriticalRoads}
+                />
+                <Switch
+                  label="Compare with Dijkstra automatically"
+                  checked={autoCompare}
+                  onChange={setAutoCompare}
+                />
+                <Switch
+                  label="Show flood zones"
+                  checked={showFloodZones}
+                  onChange={setShowFloodZones}
+                />
+                <Switch
+                  label="Show fastest dry route"
+                  checked={showBaseline}
+                  onChange={setShowBaseline}
+                  disabled={!baselineDiffers}
+                />
+              </div>
+            )}
+          </section>
+
+          <section className="card">
+            <CardHead
+              icon="play"
+              title="Live search replay"
+              aside={<span className="tag">Map animation</span>}
+            />
+            <button
+              type="button"
+              className={
+                replay.status === "playing" || replay.status === "done"
+                  ? "secondary stop"
+                  : "secondary"
+              }
+              onClick={replay.status === "idle" ? watchSearch : stopReplay}
+              disabled={
+                booting ||
+                replay.status === "loading" ||
+                !source ||
+                !destination
+              }
+            >
+              {replay.status === "loading"
+                ? "Loading search…"
+                : replay.status === "playing"
+                  ? "Stop replay"
+                  : replay.status === "done"
+                    ? "Clear replay"
+                    : "Watch search on map"}
+            </button>
+
+            {replay.status === "playing" && replay.label && (
+              <p className="replay-progress" aria-live="polite">
+                <span className={`replay-dot ${replay.algorithm}`} />
+                {replay.label}: {replay.done.toLocaleString()} /{" "}
+                {replay.total.toLocaleString()} nodes
+              </p>
+            )}
+            {replay.status === "done" && (
+              <p className="replay-progress">Replay finished.</p>
+            )}
+            {replayError && (
+              <p className="error" role="alert">
+                {replayError}
+              </p>
+            )}
+
+            <p className="note">
+              Dijkstra plays first (violet), then A* (teal). Each dot is a
+              junction the algorithm examined; the white line is its final
+              route.
+            </p>
+          </section>
+
+          <section className="card about" id="about">
+            <CardHead icon="info" title="About FloodRoute" />
+            <p className="note">
+              FloodRoute combines Dijkstra, A*, Yen's K-shortest paths and
+              Tarjan's bridge detection with simulated flood zones to find
+              safer routes across Mumbai. Prototype only: flood zones are
+              approximate, so don't use it to navigate.
+            </p>
+            <ol className="how">
+              <li>Each road costs its travel time, multiplied when flooded. Closed roads are removed.</li>
+              <li>Yen's method finds alternatives that share under 80% of their roads.</li>
+              <li>Merge sort ranks the routes by total cost.</li>
+            </ol>
+          </section>
+        </aside>
+
+        {/* ---------------- centre column ---------------- */}
+        <section className="col col-center">
+          <div className="map-wrap" aria-label="Map">
+            <MapContainer
+              center={[19.0, 72.84]}
+              zoom={12}
+              scrollWheelZoom
+              zoomControl={false}
+              preferCanvas
+              className="map"
+            >
+              <TileLayer
+                attribution="Tiles &copy; Esri &mdash; Esri, HERE, Garmin, OpenStreetMap contributors"
+                url="https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}"
+                maxNativeZoom={16}
+                maxZoom={18}
+              />
+              <TileLayer
+                url="https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}"
+                maxNativeZoom={16}
+                maxZoom={18}
+              />
+              <ZoomControl position="bottomright" />
+              <MapBridge onMap={setMapInstance} />
+              {routes.length > 0 && <FitBounds routes={routes} />}
+
+              {/* Flood zones drawn as layered glows */}
+              {showFloodZones &&
+                zones.map((zone) => {
+                  const style = LEVEL_STYLE[zone.level] || LEVEL_STYLE[1];
+                  return [1.5, 1.1, 0.75, 0.4].map((scale, i) => (
+                    <Circle
+                      key={`${scenario}-${zone.id}-${i}`}
+                      center={[zone.lat, zone.lon]}
+                      radius={zone.radius_m * scale}
+                      interactive={i === 0}
+                      pathOptions={{
+                        stroke: i === 0 && zone.blocked,
+                        color: style.color,
+                        weight: 1.5,
+                        dashArray: "5 4",
+                        fillColor: style.color,
+                        fillOpacity: 0.12 + i * 0.07,
+                      }}
+                    >
+                      {i === 0 && (
+                        <Tooltip direction="top" sticky>
+                          <strong>{zone.name}</strong>
+                          <br />
+                          {zone.blocked
+                            ? "Closed to traffic"
+                            : `${style.label} flooding`}
+                        </Tooltip>
+                      )}
+                    </Circle>
+                  ));
+                })}
+
+              {showCriticalRoads &&
+                replay.status === "idle" &&
+                networkAnalysis?.critical_roads?.map((road) =>
+                  road.coordinates?.length === 2 ? (
+                    <Polyline
+                      key={`critical-${road.source}-${road.target}`}
+                      positions={road.coordinates}
+                      pathOptions={{
+                        color: CRITICAL_COLOR,
+                        weight: 2,
+                        opacity: 0.8,
+                        dashArray: "4 4",
+                      }}
+                      interactive={false}
+                    />
+                  ) : null
+                )}
+
+              {showBaseline && baselineDiffers && baseline.coordinates && (
+                <Polyline
+                  positions={baseline.coordinates}
+                  pathOptions={{
+                    color: "#e6f1f5",
+                    weight: 3,
+                    opacity: 0.8,
+                    dashArray: "1 8",
+                    lineCap: "round",
+                  }}
+                  interactive={false}
+                />
+              )}
+
+              {/* Soft glow under every route */}
+              {routes.map((route, index) => (
+                <Polyline
+                  key={`glow-${route.path.join("-")}`}
+                  positions={route.coordinates}
+                  pathOptions={{
+                    color: ROUTE_COLORS[index % ROUTE_COLORS.length],
+                    weight: selected === index ? 14 : 9,
+                    opacity: loading ? 0.05 : selected === index ? 0.28 : 0.12,
+                    lineCap: "round",
+                    lineJoin: "round",
+                  }}
+                  interactive={false}
+                />
+              ))}
+
+              {/* Draw the selected route last so it sits on top */}
+              {routes
+                .map((route, index) => ({ route, index }))
+                .sort((a, b) => (a.index === selected) - (b.index === selected))
+                .map(({ route, index }) => (
+                  <Polyline
+                    key={route.path.join("-")}
+                    positions={route.coordinates}
+                    pathOptions={{
+                      color: ROUTE_COLORS[index % ROUTE_COLORS.length],
+                      weight: selected === index ? 5 : 3.5,
+                      opacity: loading ? 0.35 : selected === index ? 1 : 0.8,
+                      dashArray: index === 0 ? undefined : "9 7",
+                      lineCap: "round",
+                      lineJoin: "round",
+                    }}
+                    eventHandlers={{ click: () => setSelected(index) }}
+                  />
+                ))}
+
+              {routes.length > 0 && (
+                <>
+                  <Marker position={routes[0].coordinates[0]} icon={startIcon}>
+                    <Popup>From {sourceName || "start"}</Popup>
+                  </Marker>
+                  <Marker
+                    position={
+                      routes[0].coordinates[routes[0].coordinates.length - 1]
+                    }
+                    icon={endIcon}
+                  >
+                    <Popup>To {destinationName || "destination"}</Popup>
+                  </Marker>
+                </>
+              )}
+            </MapContainer>
+
+            <div className="map-card legend-routes">
+              <span className="lg">
+                <i className="lg-line" style={{ background: ROUTE_COLORS[0] }} />
+                Recommended route
+              </span>
+              <span className="lg">
+                <i className="lg-line dashed" style={{ color: ROUTE_COLORS[1] }} />
+                Alternative route
+              </span>
+              <span className="lg">
+                <i className="lg-line dashed" style={{ color: CRITICAL_COLOR }} />
+                Critical road
+              </span>
+              {baselineDiffers && (
+                <span className="lg">
+                  <i className="lg-line dotted" />
+                  Fastest dry route
+                </span>
+              )}
+            </div>
+
+            <div className="map-card legend-impact">
+              <strong>Flood impact</strong>
+              <ul>
+                {[1, 2, 3].map((level) => (
+                  <li key={level}>
+                    <span
+                      className="swatch"
+                      style={{ background: LEVEL_STYLE[level].color }}
+                    />
+                    {LEVEL_STYLE[level].label}
+                    {level === 3 && " (no traffic)"}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
+
+          <section className="card details">
+            <div className="tabs" role="tablist">
+              {[
+                ["details", "Route details"],
+                ["impact", "Flood impact"],
+                ["layers", "Map layers"],
+              ].map(([id, label]) => (
+                <button
+                  key={id}
+                  type="button"
+                  role="tab"
+                  aria-selected={tab === id}
+                  className={tab === id ? "tab on" : "tab"}
+                  onClick={() => setTab(id)}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+
+            {tab === "details" &&
+              (current ? (
+                <div className="stat-row">
+                  <div className="stat">
+                    <Icon name="ruler" size={26} />
+                    <div>
+                      <span>Total distance</span>
+                      <strong>{formatKm(current.distance)}</strong>
+                    </div>
+                  </div>
+                  <div className="stat">
+                    <Icon name="clock" size={26} />
+                    <div>
+                      <span>Estimated travel time</span>
+                      <strong>
+                        {formatMinutes(current.estimated_travel_time_minutes)}
+                      </strong>
+                    </div>
+                  </div>
+                  <div className="stat">
+                    <Icon name="drop" size={26} />
+                    <div>
+                      <span>Flood exposure</span>
+                      <strong className={`tone-${currentExposure.tone}`}>
+                        {currentExposure.text}
+                        {Number(current.flood_exposure_m) > 0 &&
+                          ` · ${formatMetres(current.flood_exposure_m)}`}
+                      </strong>
+                    </div>
+                  </div>
+                  <div className="stat">
+                    <Icon name="gauge" size={26} />
+                    <div>
+                      <span>Total cost</span>
+                      <strong>{Number(current.total_cost).toFixed(1)} min</strong>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <p className="hint">
+                  Choose a start, a destination and a scenario, then select
+                  Find routes.
+                </p>
+              ))}
+
+            {tab === "impact" && (
               <Comparison
                 best={routes[0]}
                 baseline={baseline}
-                scenario={result.scenario}
+                scenario={result?.scenario ?? scenario}
               />
+            )}
 
-              <div className="route-list">
-                {routes.map((route, index) => (
-                  <RouteCard
-                    key={route.path.join("-")}
-                    route={route}
-                    index={index}
-                    badges={badgesFor[index] || []}
-                    selected={selected === index}
-                    dry={result.scenario === "normal"}
-                    onSelect={() => setSelected(index)}
-                  />
-                ))}
+            {tab === "layers" && (
+              <div className="switches layers-grid">
+                <Switch
+                  label="Flood zones"
+                  checked={showFloodZones}
+                  onChange={setShowFloodZones}
+                />
+                <Switch
+                  label="Critical roads"
+                  checked={showCriticalRoads}
+                  onChange={setShowCriticalRoads}
+                />
+                <Switch
+                  label="Fastest dry route"
+                  checked={showBaseline}
+                  onChange={setShowBaseline}
+                  disabled={!baselineDiffers}
+                />
               </div>
-            </section>
-          )}
-          
-          <section className="network-analysis">
-            <div className="network-head">
-              <h2>Network Analysis</h2>
-              <span className="algorithm-tag">Tarjan's Algorithm</span>
-            </div>
+            )}
+          </section>
+        </section>
 
-            {networkLoading ? (
-              <p className="hint">Loading network analysis...</p>
-            ) : networkError ? (
-              <p className="error">{networkError}</p>
-            ) : networkAnalysis ? (
-              <>
-                <div className="network-stats">
-                  <div className="network-stat">
-                    <span>Total Nodes</span>
-                    <strong>
-                      {networkAnalysis.total_nodes.toLocaleString()}
-                    </strong>
-                  </div>
+        {/* ---------------- right column ---------------- */}
+        <aside className="col col-right">
+          <section
+            className={loading ? "card updating" : "card"}
+            aria-live="polite"
+          >
+            <CardHead
+              icon="route"
+              title="Route comparison"
+              aside={
+                result && (
+                  <span className="timing">
+                    {loading
+                      ? "Updating…"
+                      : `${result.algorithm === "astar" ? "A*" : "Dijkstra"} · ${(result.computation_ms / 1000).toFixed(1)} s`}
+                  </span>
+                )
+              }
+            />
 
-                  <div className="network-stat">
-                    <span>Connections</span>
-                    <strong>
-                      {networkAnalysis.total_connections.toLocaleString()}
-                    </strong>
-                  </div>
-
-                  <div className="network-stat critical">
-                    <span>Critical Roads</span>
-                    <strong>
-                      {networkAnalysis.total_bridges.toLocaleString()}
-                    </strong>
-                  </div>
-                </div>
-
-                <p className="network-note">
-                  Critical roads are bridge connections whose removal
-                  would disconnect part of the undirected road network.
-                </p>
-              </>
-            ) : null}
+            {routes.length === 0 ? (
+              <p className="hint">
+                Your recommended route and alternatives will appear here.
+              </p>
+            ) : (
+              <div className="rc-list">
+                {routes.map((route, index) => {
+                  const exposure = exposureOf(route);
+                  const color = ROUTE_COLORS[index % ROUTE_COLORS.length];
+                  return (
+                    <button
+                      key={route.path.join("-")}
+                      type="button"
+                      className={selected === index ? "rc on" : "rc"}
+                      style={{ "--accent": color }}
+                      onClick={() => setSelected(index)}
+                      aria-pressed={selected === index}
+                    >
+                      <span className="rc-title">
+                        <strong>
+                          {index === 0
+                            ? "Recommended route"
+                            : `Alternative route ${index}`}
+                        </strong>
+                        {index === 0 && <span className="chip best">Best</span>}
+                        {(badgesFor[index] || []).map((b) => (
+                          <span key={b} className="chip">
+                            {b}
+                          </span>
+                        ))}
+                      </span>
+                      <span className="rc-metrics">
+                        <span>
+                          <Icon name="ruler" size={15} />
+                          {formatKm(route.distance)}
+                        </span>
+                        <span>
+                          <Icon name="clock" size={15} />
+                          {formatMinutes(route.estimated_travel_time_minutes)}
+                        </span>
+                        <span className={`tone-${exposure.tone}`}>
+                          <Icon name="shield" size={15} />
+                          {exposure.text}
+                        </span>
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
           </section>
 
           <AlgorithmComparison
             source={Number(source) || null}
             destination={Number(destination) || null}
             scenario={scenario}
+            auto={autoCompare}
+            trigger={result}
           />
 
-          <section className="algo-compare">
-            <div className="network-head">
-              <h2>Live search replay</h2>
-              <span className="algorithm-tag">Map animation</span>
-            </div>
-
-            <div className="replay-bar">
-              <button
-                type="button"
-                className={
-                  replay.status === "playing" || replay.status === "done"
-                    ? "primary stop"
-                    : "primary"
-                }
-                onClick={replay.status === "idle" ? watchSearch : stopReplay}
-                disabled={
-                  booting ||
-                  replay.status === "loading" ||
-                  !source ||
-                  !destination
-                }
-              >
-                {replay.status === "loading"
-                  ? "Loading search…"
-                  : replay.status === "playing"
-                    ? "Stop replay"
-                    : replay.status === "done"
-                      ? "Clear replay"
-                      : "Watch search on map"}
-              </button>
-
-              {replay.status === "playing" && replay.label && (
-                <p className="replay-progress" aria-live="polite">
-                  <span className={`replay-dot ${replay.algorithm}`} />
-                  {replay.label}: {replay.done.toLocaleString()} /{" "}
-                  {replay.total.toLocaleString()} nodes
-                </p>
-              )}
-
-              {replay.status === "done" && (
-                <p className="replay-progress">Replay finished.</p>
-              )}
-
-              {replayError && (
-                <p className="error" role="alert">
-                  {replayError}
-                </p>
-              )}
-            </div>
-
-            <p className="network-note">
-              Dijkstra plays first (violet), then A* (teal). Each dot is a
-              junction the algorithm examined; the dark line is its final
-              route.
-            </p>
-          </section>
-
-          <details className="how">
-            <summary>How routes are chosen</summary>
-            <ol>
-              <li>
-                Each road costs its travel time, multiplied when it's flooded.
-                Closed roads are removed.
-              </li>
-              <li>
-                Dijkstra's algorithm with a min-heap finds the cheapest route in
-                O((V + E) log V).
-              </li>
-              <li>
-                Yen's method then finds alternatives, skipping any that share
-                more than 80% of their roads with a route already chosen.
-              </li>
-              <li>Merge sort ranks the routes by total cost.</li>
-            </ol>
-          </details>
-        </aside>
-
-        <section className="map-wrap" aria-label="Map">
-          <MapContainer
-            center={[19.0, 72.84]}
-            zoom={12}
-            scrollWheelZoom
-            className="map"
-          >
-            <TileLayer
-              attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-              url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+          <section className="card">
+            <CardHead
+              icon="route"
+              title="Alternative routes"
+              aside={
+                <label className="sort">
+                  Sort by
+                  <select
+                    value={sortBy}
+                    onChange={(e) => setSortBy(e.target.value)}
+                  >
+                    {SORTS.map((s) => (
+                      <option key={s.key} value={s.key}>
+                        {s.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              }
             />
 
-            <MapBridge onMap={setMapInstance} />
-
-            {routes.length > 0 && <FitBounds routes={routes} />}
-
-            {zones.map((zone) => {
-              const style = LEVEL_STYLE[zone.level] || LEVEL_STYLE[1];
-              return (
-                <Circle
-                  key={`${scenario}-${zone.id}`}
-                  center={[zone.lat, zone.lon]}
-                  radius={zone.radius_m}
-                  pathOptions={{
-                    color: style.color,
-                    weight: zone.blocked ? 2 : 1.5,
-                    dashArray: zone.blocked ? "5 4" : undefined,
-                    fillColor: style.fill,
-                    fillOpacity: zone.blocked ? 0.38 : 0.26,
-                  }}
-                >
-                  <Tooltip direction="top" sticky>
-                    <strong>{zone.name}</strong>
-                    <br />
-                    {zone.blocked ? "Closed to traffic" : `${style.label} flooding`}
-                  </Tooltip>
-                </Circle>
-              );
-            })}
-
-            {showCriticalRoads &&
-  replay.status === "idle" &&
-  networkAnalysis?.critical_roads?.map((road) => {
-    if (!road.coordinates || road.coordinates.length !== 2) {
-      return null;
-    }
-
-    return (
-      <Polyline
-        key={`critical-${road.source}-${road.target}`}
-        positions={road.coordinates}
-        pathOptions={{
-          color: "#ff00ff",
-          weight: 2,
-          opacity: 0.65,
-          lineCap: "round",
-        }}
-        interactive={false}
-      />
-    );
-  })}
-
-            {routes.map((route, index) => (
-              <Polyline
-                key={`casing-${route.path.join("-")}`}
-                positions={route.coordinates}
-                pathOptions={{
-                  color: "#ffffff",
-                  weight: selected === index ? 11 : 8,
-                  opacity: loading ? 0.4 : 0.95,
-                  lineCap: "round",
-                  lineJoin: "round",
-                }}
-                interactive={false}
-              />
-            ))}
-
-            {routes.map((route, index) => (
-              <Polyline
-                key={route.path.join("-")}
-                positions={route.coordinates}
-                pathOptions={{
-                  color: ROUTE_COLORS[index % ROUTE_COLORS.length],
-                  weight: selected === index ? 6 : 4,
-                  opacity: loading ? 0.35 : selected === index ? 1 : 0.75,
-                  lineCap: "round",
-                  lineJoin: "round",
-                }}
-                eventHandlers={{ click: () => setSelected(index) }}
-              />
-            ))}
-
-            {routes.length > 0 && (
-              <>
-                <Marker position={routes[0].coordinates[0]} icon={startIcon}>
-                  <Popup>From {sourceName || "start"}</Popup>
-                </Marker>
-                <Marker
-                  position={
-                    routes[0].coordinates[routes[0].coordinates.length - 1]
-                  }
-                  icon={endIcon}
-                >
-                  <Popup>To {destinationName || "destination"}</Popup>
-                </Marker>
-              </>
+            {routes.length === 0 ? (
+              <p className="hint">No routes yet.</p>
+            ) : (
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>#</th>
+                    <th>Distance</th>
+                    <th>Time</th>
+                    <th>Flood exposure</th>
+                    <th>Cost</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {sortedRows.map(({ route, index }) => {
+                    const exposure = exposureOf(route);
+                    return (
+                      <tr
+                        key={route.path.join("-")}
+                        className={selected === index ? "on" : ""}
+                        onClick={() => setSelected(index)}
+                      >
+                        <td>
+                          <span
+                            className="row-dot"
+                            style={{
+                              background:
+                                ROUTE_COLORS[index % ROUTE_COLORS.length],
+                            }}
+                          />
+                          {index + 1}
+                        </td>
+                        <td>{formatKm(route.distance)}</td>
+                        <td>{formatMinutes(route.estimated_travel_time_minutes)}</td>
+                        <td className={`tone-${exposure.tone}`}>{exposure.text}</td>
+                        <td>{Number(route.total_cost).toFixed(1)}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
             )}
-          </MapContainer>
+          </section>
 
-          {zones.length > 0 && (
-            <div className="map-card legend">
-              <strong>Flooded junctions</strong>
-              <ul>
-                {[1, 2, 3]
-                  .filter((level) => zones.some((z) => z.level === level))
-                  .map((level) => (
-                    <li key={level}>
-                      <span
-                        className={level === 3 ? "swatch closed" : "swatch"}
-                        style={{
-                          backgroundColor: LEVEL_STYLE[level].fill,
-                          borderColor: LEVEL_STYLE[level].color,
-                        }}
-                      />
-                      {LEVEL_STYLE[level].label}
-                      {level === 3 && " (no traffic)"}
-                    </li>
-                  ))}
-                  <li>
-                  <span className="critical-road-swatch" />
-                  Critical roads (Tarjan)
-                </li>
-              </ul>
+          <section className="card" id="network">
+            <CardHead
+              icon="network"
+              title="Network analysis"
+              aside={<span className="tag">Tarjan's algorithm</span>}
+            />
 
-              {baselineDiffers && (
-                <label className="toggle">
-                  <input
-                    type="checkbox"
-                    checked={showBaseline}
-                    onChange={(e) => setShowBaseline(e.target.checked)}
-                  />
-                  <span className="toggle-line" aria-hidden="true" />
-                  Fastest dry route
-                </label>
-              )}
-            </div>
-          )}
-
-          {current && (
-            <div className="map-card summary">
-              <span
-                className="summary-swatch"
-                style={{
-                  backgroundColor:
-                    ROUTE_COLORS[selected % ROUTE_COLORS.length],
-                }}
-              />
-              <div>
-                <strong>
-                  {sourceName} to {destinationName}
-                </strong>
-                <p>
-                  Route {selected + 1}: {formatMinutes(current.estimated_travel_time_minutes)},{" "}
-                  {formatKm(current.distance)}
-                  {Number(current.flood_exposure_m) > 0
-                    ? `, ${formatMetres(current.flood_exposure_m)} flooded`
-                    : ", no flooded roads"}
+            {networkLoading ? (
+              <p className="hint">Loading network analysis…</p>
+            ) : networkError ? (
+              <p className="error">{networkError}</p>
+            ) : networkAnalysis ? (
+              <>
+                <div className="net-stats">
+                  <div>
+                    <span>Total nodes</span>
+                    <strong>{networkAnalysis.total_nodes.toLocaleString()}</strong>
+                  </div>
+                  <div>
+                    <span>Connections</span>
+                    <strong>
+                      {networkAnalysis.total_connections.toLocaleString()}
+                    </strong>
+                  </div>
+                  <div className="crit">
+                    <span>Critical roads</span>
+                    <strong>{networkAnalysis.total_bridges.toLocaleString()}</strong>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  className="outline"
+                  onClick={() => setShowCriticalRoads((on) => !on)}
+                >
+                  {showCriticalRoads ? "Hide critical roads" : "View critical roads"}
+                </button>
+                <p className="note">
+                  Critical roads are bridges: removing one would disconnect part
+                  of the road network.
                 </p>
-              </div>
-            </div>
-          )}
-        </section>
+              </>
+            ) : null}
+          </section>
+        </aside>
       </main>
-
-      <footer className="foot">
-        Flood zones are approximate and based on commonly reported waterlogging
-        spots. Prototype only. Don't use it to navigate.
-      </footer>
     </div>
   );
 }

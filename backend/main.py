@@ -1,3 +1,5 @@
+from typing import Literal
+
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
@@ -37,6 +39,7 @@ class AlternativeRoutesRequest(BaseModel):
     destination: int
     k: int = Field(default=3, ge=1, le=5)
     scenario: str = "normal"
+    algorithm: Literal["dijkstra", "astar"] = "dijkstra"
 
 
 class CompareRequest(BaseModel):
@@ -120,6 +123,7 @@ def get_alternative_routes(request: AlternativeRoutesRequest):
         request.destination,
         request.k,
         request.scenario,
+        request.algorithm,
     )
 
     if not result["routes"]:

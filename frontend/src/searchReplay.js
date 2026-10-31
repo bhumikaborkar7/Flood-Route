@@ -3,8 +3,8 @@
 // Returns a cancel() function that removes everything it drew.
 
 const STYLES = {
- dijkstra: { color: '#7048e8', label: 'Dijkstra' },
-  astar: { color: '#0b7285', label: 'A*' },
+ dijkstra: { color: '#9b6bff', label: 'Dijkstra' },
+  astar: { color: '#1fd1b5', label: 'A*' },
 }
 
 export function playSearch(L, map, data, { frames = 360, onProgress, onDone } = {}) {
@@ -42,7 +42,7 @@ export function playSearch(L, map, data, { frames = 360, onProgress, onDone } = 
         rafId = requestAnimationFrame(step)
       } else {
         if (path.length) {
-          L.polyline(path, { color: '#0f2230', weight: 5, opacity: 0.9 }).addTo(layer)
+          L.polyline(path, { color: '#ffffff', weight: 4, opacity: 0.95 }).addTo(layer)
         }
         setTimeout(() => !cancelled && next(), 1500)
       }

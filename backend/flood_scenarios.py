@@ -249,7 +249,7 @@ def describe_route(path, graph, coordinates, levels):
 
 
 def find_scenario_routes(graph, coordinates, source, destination, k=3,
-                         scenario_id=DEFAULT_SCENARIO):
+                         scenario_id=DEFAULT_SCENARIO, path_fn=shortest_path):
     """Rank up to k routes for a scenario and compare with the fastest route.
 
     The "baseline" is the route a flood-unaware planner would choose: the
@@ -261,7 +261,7 @@ def find_scenario_routes(graph, coordinates, source, destination, k=3,
     weighted, levels = build_scenario_graph(graph, coordinates, scenario_id)
 
     paths = yen_k_shortest_paths(
-        weighted, source, destination, k, shortest_path,
+        weighted, source, destination, k, path_fn,
     )
 
     routes = merge_sort([
@@ -273,7 +273,7 @@ def find_scenario_routes(graph, coordinates, source, destination, k=3,
 
     if routes:
         dry_weighted, _ = build_scenario_graph(graph, coordinates, DEFAULT_SCENARIO)
-        baseline_path = shortest_path(dry_weighted, source, destination)
+        baseline_path = path_fn(dry_weighted, source, destination)
 
         if baseline_path:
             baseline = describe_route(baseline_path, graph, coordinates, levels)
