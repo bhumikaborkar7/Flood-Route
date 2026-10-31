@@ -1,4 +1,3 @@
-
 import { useEffect, useMemo, useRef, useState } from "react";
 import L from "leaflet";
 import {
@@ -13,10 +12,14 @@ import {
 } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
 import "./App.css";
+import AlgorithmComparison from "./AlgorithmComparison";
+import { playSearch } from "./searchReplay";
 
 const API = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
 
 const ROUTE_COLORS = ["#0b7285", "#5b5bd6", "#b83280"];
+
+const IDLE_REPLAY = { status: "idle", algorithm: null, label: "", done: 0, total: 0 };
 
 const LEVEL_STYLE = {
   1: { color: "#d9a42b", fill: "#f2c94c", label: "Low" },
@@ -92,6 +95,17 @@ function FitBounds({ routes }) {
       map.fitBounds(points, { padding: [60, 60] });
     }
   }, [map, routes]);
+
+  return null;
+}
+
+// Hands the Leaflet map instance up to App so the search replay can draw on it.
+function MapBridge({ onMap }) {
+  const map = useMap();
+
+  useEffect(() => {
+    onMap(map);
+  }, [map, onMap]);
 
   return null;
 }
@@ -259,6 +273,12 @@ function App() {
   const [showCriticalRoads, setShowCriticalRoads] = useState(true);
   const [networkLoading, setNetworkLoading] = useState(true);
   const [networkError, setNetworkError] = useState("");
+  const [mapInstance, setMapInstance] = useState(null);
+  const [replay, setReplay] = useState(IDLE_REPLAY);
+  const [replayError, setReplayError] = useState("");
+  const [backendOnline, setBackendOnline] = useState(null);
+  const cancelReplay = useRef(null);
+  const latestReplay = useRef(0);
 
   useEffect(() => {
     async function boot() {
@@ -303,6 +323,27 @@ function App() {
     fetchNetworkAnalysis();
   }, []);
 
+  useEffect(() => {
+    let active = true;
+
+    async function checkBackend() {
+      try {
+        const response = await fetch(`${API}/`);
+        if (active) setBackendOnline(response.ok);
+      } catch {
+        if (active) setBackendOnline(false);
+      }
+    }
+
+    checkBackend();
+    const timer = setInterval(checkBackend, 5000);
+
+    return () => {
+      active = false;
+      clearInterval(timer);
+    };
+  }, []);
+
   async function findRoutes(scenarioId = scenario) {
     if (!source || !destination) {
       setError("Choose a start and a destination.");
@@ -345,6 +386,7 @@ function App() {
 
   function changeScenario(id) {
     setScenario(id);
+    stopReplay();
 
     // Re-plan straight away so the route visibly reacts to the flooding.
     if (result) findRoutes(id);
@@ -353,6 +395,7 @@ function App() {
   function changePlace(setter) {
     return (event) => {
       latestRequest.current++;
+      stopReplay();
       setter(event.target.value);
       setResult(null);
       setLoading(false);
@@ -362,11 +405,73 @@ function App() {
 
   function swapPlaces() {
     latestRequest.current++;
+    stopReplay();
     setSource(destination);
     setDestination(source);
     setResult(null);
     setLoading(false);
     setError("");
+  }
+
+  function stopReplay() {
+    latestReplay.current++;
+    cancelReplay.current?.();
+    cancelReplay.current = null;
+    setReplay(IDLE_REPLAY);
+    setReplayError("");
+  }
+
+  async function watchSearch() {
+    if (!source || !destination) {
+      setReplayError("Choose a start and a destination.");
+      return;
+    }
+
+    if (source === destination) {
+      setReplayError("Start and destination are the same place. Pick two different ones.");
+      return;
+    }
+
+    if (!mapInstance) return;
+
+    stopReplay();
+    const replayId = latestReplay.current;
+    setReplay({ ...IDLE_REPLAY, status: "loading" });
+
+    try {
+      const data = await request("/search-trace", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          source: Number(source),
+          destination: Number(destination),
+          scenario,
+        }),
+      });
+
+      if (replayId !== latestReplay.current) return;
+
+      if (data.dijkstra.explored.length > 0) {
+        mapInstance.fitBounds(data.dijkstra.explored, { padding: [40, 40] });
+      }
+
+      setReplay({ ...IDLE_REPLAY, status: "playing" });
+
+      cancelReplay.current = playSearch(L, mapInstance, data, {
+        onProgress: (progress) => {
+          if (replayId !== latestReplay.current) return;
+          setReplay({ status: "playing", ...progress });
+        },
+        onDone: () => {
+          if (replayId !== latestReplay.current) return;
+          setReplay((previous) => ({ ...previous, status: "done" }));
+        },
+      });
+    } catch (err) {
+      if (replayId !== latestReplay.current) return;
+      setReplay(IDLE_REPLAY);
+      setReplayError(err.message);
+    }
   }
 
   const routes = useMemo(
@@ -433,7 +538,23 @@ function App() {
           </div>
         </div>
 
-        <span className="sim-badge">Simulated flooding, not live data</span>
+        <span
+          className={`status-badge ${
+            backendOnline === null
+              ? "checking"
+              : backendOnline
+                ? "online"
+                : "offline"
+          }`}
+          role="status"
+        >
+          <span className="status-dot" aria-hidden="true" />
+          {backendOnline === null
+            ? "Checking backend…"
+            : backendOnline
+              ? "Backend online"
+              : "Backend offline"}
+        </span>
       </header>
 
       <main className="layout">
@@ -625,6 +746,69 @@ function App() {
             ) : null}
           </section>
 
+          <AlgorithmComparison
+            source={Number(source) || null}
+            destination={Number(destination) || null}
+            scenario={scenario}
+          />
+
+          <section className="algo-compare">
+            <div className="network-head">
+              <h2>Live search replay</h2>
+              <span className="algorithm-tag">Map animation</span>
+            </div>
+
+            <div className="replay-bar">
+              <button
+                type="button"
+                className={
+                  replay.status === "playing" || replay.status === "done"
+                    ? "primary stop"
+                    : "primary"
+                }
+                onClick={replay.status === "idle" ? watchSearch : stopReplay}
+                disabled={
+                  booting ||
+                  replay.status === "loading" ||
+                  !source ||
+                  !destination
+                }
+              >
+                {replay.status === "loading"
+                  ? "Loading search…"
+                  : replay.status === "playing"
+                    ? "Stop replay"
+                    : replay.status === "done"
+                      ? "Clear replay"
+                      : "Watch search on map"}
+              </button>
+
+              {replay.status === "playing" && replay.label && (
+                <p className="replay-progress" aria-live="polite">
+                  <span className={`replay-dot ${replay.algorithm}`} />
+                  {replay.label}: {replay.done.toLocaleString()} /{" "}
+                  {replay.total.toLocaleString()} nodes
+                </p>
+              )}
+
+              {replay.status === "done" && (
+                <p className="replay-progress">Replay finished.</p>
+              )}
+
+              {replayError && (
+                <p className="error" role="alert">
+                  {replayError}
+                </p>
+              )}
+            </div>
+
+            <p className="network-note">
+              Dijkstra plays first (violet), then A* (teal). Each dot is a
+              junction the algorithm examined; the dark line is its final
+              route.
+            </p>
+          </section>
+
           <details className="how">
             <summary>How routes are chosen</summary>
             <ol>
@@ -657,6 +841,8 @@ function App() {
               url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
             />
 
+            <MapBridge onMap={setMapInstance} />
+
             {routes.length > 0 && <FitBounds routes={routes} />}
 
             {zones.map((zone) => {
@@ -684,6 +870,7 @@ function App() {
             })}
 
             {showCriticalRoads &&
+  replay.status === "idle" &&
   networkAnalysis?.critical_roads?.map((road) => {
     if (!road.coordinates || road.coordinates.length !== 2) {
       return null;

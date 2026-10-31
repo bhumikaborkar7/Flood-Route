@@ -787,3 +787,143 @@ ol {
   margin-right: 8px;
   vertical-align: middle;
 }
+
+/* Algorithm comparison: Dijkstra vs A* */
+
+.algo-compare {
+  margin-top: 22px;
+  padding: 16px;
+  background: #f1f7f9;
+  border: 1px solid #d8e7eb;
+  border-radius: 12px;
+}
+
+.algo-compare .primary {
+  padding: 10px 14px;
+  font-size: 14px;
+}
+
+.algo-compare .error {
+  margin-top: 10px;
+}
+
+.algo-table {
+  width: 100%;
+  margin-top: 12px;
+  border-collapse: separate;
+  border-spacing: 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: #fff;
+  font-size: 13px;
+}
+
+.algo-table th,
+.algo-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--line);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.algo-table th:first-child,
+.algo-table td:first-child {
+  text-align: left;
+}
+
+.algo-table thead th {
+  background: var(--teal-wash);
+  color: var(--teal-deep);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.algo-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.algo-table td:first-child {
+  color: var(--ink-soft);
+}
+
+.algo-table td.win {
+  background: var(--calm-wash);
+  color: var(--calm);
+  font-weight: 600;
+}
+
+.algo-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.algo-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 8px;
+  border-radius: 9px;
+  background: #fff;
+}
+
+.algo-stat span {
+  color: #647987;
+  font-size: 11px;
+}
+
+.algo-stat strong {
+  color: #123747;
+  font-size: 16px;
+}
+
+.algo-stat.ok strong {
+  color: var(--calm);
+}
+
+.algo-stat.bad strong {
+  color: var(--red);
+}
+/* Live search replay: Dijkstra vs A* on the map */
+
+.replay-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.replay-bar .primary {
+  padding: 10px 14px;
+  font-size: 14px;
+}
+
+.replay-bar .primary.stop {
+  background: var(--ink);
+}
+
+.replay-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink-soft);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.replay-dot {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+
+.replay-dot.dijkstra {
+  background: #7048e8;
+}
+
+.replay-dot.astar {
+  background: var(--teal);
+}

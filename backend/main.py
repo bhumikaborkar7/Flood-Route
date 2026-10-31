@@ -6,10 +6,12 @@ from backend.route_service import (
     find_route,
     find_alternative_routes,
     find_scenario_alternatives,
+    compare_algorithms,
     is_known_scenario,
     scenario_details,
     coordinates,
     get_network_analysis,
+    trace_search,
 )
 
 
@@ -35,6 +37,13 @@ class AlternativeRoutesRequest(BaseModel):
     destination: int
     k: int = Field(default=3, ge=1, le=5)
     scenario: str = "normal"
+
+
+class CompareRequest(BaseModel):
+    source: int
+    destination: int
+    scenario: str = "normal"
+    runs: int = Field(default=3, ge=1, le=10)
 
 
 @app.get("/")
@@ -126,5 +135,66 @@ def get_alternative_routes(request: AlternativeRoutesRequest):
         "source": request.source,
         "destination": request.destination,
         "routes_found": len(result["routes"]),
+        **result,
+    }
+
+
+@app.post("/compare-algorithms")
+def compare_search_algorithms(request: CompareRequest):
+    """Dijkstra vs A* on the same graph: cost, nodes expanded, time."""
+    if not is_known_scenario(request.scenario):
+        raise HTTPException(
+            status_code=422,
+            detail=f"Unknown scenario '{request.scenario}'",
+        )
+
+    result = compare_algorithms(
+        request.source,
+        request.destination,
+        request.scenario,
+        request.runs,
+    )
+
+    if not result["dijkstra"]["found"]:
+        raise HTTPException(
+            status_code=404,
+            detail="No route found between these locations in this scenario.",
+        )
+
+    return {
+        "source": request.source,
+        "destination": request.destination,
+        **result,
+    }
+class TraceRequest(BaseModel):
+    source: int
+    destination: int
+    scenario: str = "normal"
+
+
+@app.post("/search-trace")
+def search_trace(request: TraceRequest):
+    """Order in which Dijkstra and A* explored nodes, for the map replay."""
+    if not is_known_scenario(request.scenario):
+        raise HTTPException(
+            status_code=422,
+            detail=f"Unknown scenario '{request.scenario}'",
+        )
+
+    result = trace_search(
+        request.source,
+        request.destination,
+        request.scenario,
+    )
+
+    if not result["dijkstra"]["found"]:
+        raise HTTPException(
+            status_code=404,
+            detail="No route found between these locations in this scenario.",
+        )
+
+    return {
+        "source": request.source,
+        "destination": request.destination,
         **result,
     }

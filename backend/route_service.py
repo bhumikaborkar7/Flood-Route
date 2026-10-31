@@ -1,12 +1,16 @@
+import time
+
 from backend.network_analysis import find_critical_roads
 from backend.graph_builder import build_graph
 from backend.dijkstra import dijkstra
+from backend.astar import astar, min_minutes_per_meter
 from backend.route_adapter import convert_graph
 from backend.alternative_routes import yen_k_shortest_paths
 from backend.sorting import merge_sort
 from backend.flood_scenarios import (
     DEFAULT_SCENARIO,
     SCENARIOS,
+    build_scenario_graph,
     find_scenario_routes,
     list_scenarios,
 )
@@ -17,6 +21,12 @@ graph, coordinates = build_graph()
 
 # Convert the graph for Yen's K-shortest paths algorithm.
 weighted_graph = convert_graph(graph)
+
+# Lower bound on minutes per metre, used by the A* heuristic.
+MIN_MIN_PER_M = min_minutes_per_meter(graph)
+
+# scenario_id -> {node: [(neighbor, cost), ...]} for Dijkstra.
+_dijkstra_graphs = {}
 
 
 def route_details_for_path(path):
@@ -154,3 +164,112 @@ def get_network_analysis():
     """Return critical road connections identified by Tarjan's algorithm."""
 
     return find_critical_roads(graph, coordinates)
+
+
+def _dijkstra_graph_for(scenario, weighted):
+    """List-format graph for Dijkstra, built once per scenario.
+
+    Built outside the timed section so the comparison measures the search
+    itself and not the graph conversion.
+    """
+    if scenario not in _dijkstra_graphs:
+        _dijkstra_graphs[scenario] = {
+            node: list(neighbors.items())
+            for node, neighbors in weighted.items()
+        }
+
+    return _dijkstra_graphs[scenario]
+
+
+def compare_algorithms(source, destination, scenario=DEFAULT_SCENARIO, runs=3):
+    """Run Dijkstra and A* on the same scenario graph and compare them."""
+
+    weighted, _ = build_scenario_graph(graph, coordinates, scenario)
+    dijkstra_graph = _dijkstra_graph_for(scenario, weighted)
+
+    def timed(search):
+        best_ms = float("inf")
+        result = None
+        stats = {}
+
+        for _ in range(max(1, runs)):
+            stats = {}
+            started = time.perf_counter()
+            result = search(stats)
+            elapsed = (time.perf_counter() - started) * 1000
+            best_ms = min(best_ms, elapsed)
+
+        path, cost = result
+
+        return {
+            "path": path,
+            "found": bool(path),
+            "total_cost": round(cost, 2) if path else None,
+            "nodes_expanded": stats.get("nodes_expanded", 0),
+            "time_ms": round(best_ms, 3),
+        }
+
+    dijkstra_result = timed(
+        lambda stats: dijkstra(dijkstra_graph, source, destination, stats)
+    )
+
+    astar_result = timed(
+        lambda stats: astar(
+            weighted, source, destination, coordinates, MIN_MIN_PER_M, stats
+        )
+    )
+
+    same_cost = (
+        dijkstra_result["total_cost"] is not None
+        and astar_result["total_cost"] is not None
+        and abs(dijkstra_result["total_cost"] - astar_result["total_cost"]) < 0.01
+    )
+
+    d_nodes = dijkstra_result["nodes_expanded"]
+    a_nodes = astar_result["nodes_expanded"]
+    d_time = dijkstra_result["time_ms"]
+    a_time = astar_result["time_ms"]
+
+    return {
+        "scenario": scenario,
+        "dijkstra": dijkstra_result,
+        "astar": astar_result,
+        "same_cost": same_cost,
+        "same_path": dijkstra_result["path"] == astar_result["path"],
+        "nodes_saved_percent": (
+            round((1 - a_nodes / d_nodes) * 100, 1) if d_nodes else 0.0
+        ),
+        "speedup": round(d_time / a_time, 2) if a_time else None,
+    }
+def trace_search(source, destination, scenario=DEFAULT_SCENARIO):
+    """Run both algorithms once and record the order nodes were expanded."""
+
+    weighted, _ = build_scenario_graph(graph, coordinates, scenario)
+    dijkstra_graph = _dijkstra_graph_for(scenario, weighted)
+
+    def point(node):
+        lat, lon = coordinates[node]
+        return [round(lat, 5), round(lon, 5)]
+
+    def package(path, cost, stats):
+        return {
+            "found": bool(path),
+            "total_cost": round(cost, 2) if path else None,
+            "nodes_expanded": len(stats["trace"]),
+            "explored": [point(n) for n in stats["trace"]],
+            "path": [point(n) for n in path],
+        }
+
+    d_stats = {"trace": []}
+    d_path, d_cost = dijkstra(dijkstra_graph, source, destination, d_stats)
+
+    a_stats = {"trace": []}
+    a_path, a_cost = astar(
+        weighted, source, destination, coordinates, MIN_MIN_PER_M, a_stats
+    )
+
+    return {
+        "scenario": scenario,
+        "dijkstra": package(d_path, d_cost, d_stats),
+        "astar": package(a_path, a_cost, a_stats),
+    }
